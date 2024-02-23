@@ -27,6 +27,7 @@ from localstack.utils.sync import poll_condition, wait_until
 from tests.aws.services.kinesis.test_kinesis import get_shard_iterator
 
 PARTITION_KEY = "id"
+RANGE_KEY = "range"
 
 TEST_DDB_TAGS = [
     {"Key": "Name", "Value": "test-table"},
@@ -71,6 +72,20 @@ class TestDynamoDB:
         yield table_name
 
         aws_client.dynamodb.delete_table(TableName=table_name)
+    
+    @pytest.fixture
+    def ddb_test_table_with_range_key(self, aws_client) -> str:
+        """
+        This fixture returns a DynamoDB table for testing.
+        """
+        table_name = f"ddb-test-table-{short_uid()}"
+        resources.create_dynamodb_table(
+            table_name, partition_key=PARTITION_KEY, range_key=RANGE_KEY, client=aws_client.dynamodb
+        )
+
+        yield table_name
+
+        aws_client.dynamodb.delete_table(TableName=table_name)
 
     @markers.aws.only_localstack
     def test_non_ascii_chars(self, aws_client, ddb_test_table):
@@ -108,6 +123,37 @@ class TestDynamoDB:
     @markers.aws.only_localstack
     def test_time_to_live_deletion(self, aws_client, ddb_test_table):
         table_name = ddb_test_table
+        aws_client.dynamodb.update_time_to_live(
+            TableName=table_name,
+            TimeToLiveSpecification={"Enabled": True, "AttributeName": "expiringAt"},
+        )
+        aws_client.dynamodb.describe_time_to_live(TableName=table_name)
+
+        exp = int(time.time()) - 10  # expired
+        items = [
+            {PARTITION_KEY: {"S": "expired"}, "expiringAt": {"N": str(exp)}},
+            {PARTITION_KEY: {"S": "not-expired"}, "expiringAt": {"N": str(exp + 120)}},
+        ]
+        for item in items:
+            aws_client.dynamodb.put_item(TableName=table_name, Item=item)
+
+        url = f"{config.internal_service_url()}/_aws/dynamodb/expired"
+        response = requests.delete(url)
+        assert response.status_code == 200
+        assert response.json() == {"ExpiredItems": 1}
+
+        result = aws_client.dynamodb.get_item(
+            TableName=table_name, Key={PARTITION_KEY: {"S": "not-expired"}}
+        )
+        assert result.get("Item")
+        result = aws_client.dynamodb.get_item(
+            TableName=table_name, Key={PARTITION_KEY: {"S": "expired"}}
+        )
+        assert not result.get("Item")
+
+    @markers.aws.only_localstack
+    def test_time_to_live_deletion_with_range_key(self, aws_client, ddb_test_table_with_range_key):
+        table_name = ddb_test_table_with_range_key
         aws_client.dynamodb.update_time_to_live(
             TableName=table_name,
             TimeToLiveSpecification={"Enabled": True, "AttributeName": "expiringAt"},

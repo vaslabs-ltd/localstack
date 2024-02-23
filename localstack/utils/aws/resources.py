@@ -30,13 +30,14 @@ def create_s3_bucket(bucket_name: str, s3_client=None):
 def create_dynamodb_table(
     table_name: str,
     partition_key: str,
+    range_key: str = None,
     stream_view_type: str = None,
     region_name: str = None,
     client=None,
     wait_for_active: bool = True,
 ) -> CreateTableOutput | DescribeTableOutput:
     """Utility method to create a DynamoDB table"""
-
+    # where is the range key?????
     dynamodb = client or connect_to(region_name=region_name).dynamodb
     stream_spec = {"StreamEnabled": False}
     key_schema = [{"AttributeName": partition_key, "KeyType": "HASH"}]
